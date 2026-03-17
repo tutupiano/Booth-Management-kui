@@ -23,10 +23,10 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = "m5-integrated-v6-2"; 
+const appId = "m5-integrated-v6-7"; 
 const ADMIN_PW = "0927";
 
-// --- [BASE DATA] ---
+// --- [DATA CONSTANTS] ---
 const CATEGORY_THEMES = { "츠오미": "bg-[#FFD1DC]", "꾸이꾸이": "bg-[#CCEEFF]", "두근": "bg-[#EAE7E2]", "기타": "bg-white" };
 const INITIAL_PRODUCTS = {
   "츠오미": [{ id: "tsu_1", name: "키레네 포스터", count: 0, price: 10000, unit: "개" }],
@@ -66,7 +66,7 @@ const INITIAL_PRODUCTS = {
   ]
 };
 
-const ALL_ITEM_NAMES = Object.values(INITIAL_PRODUCTS).flat().map(p => p.name);
+const ALL_ITEM_LIST = Object.values(INITIAL_PRODUCTS).flat().map(p => p.name);
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -85,7 +85,17 @@ const App = () => {
   const [showNewOrderPopup, setShowNewOrderPopup] = useState(false);
   const [packingChecked, setPackingChecked] = useState({});
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [filters, setFilters] = useState({ paymentType: 'all', minPrice: '', maxPrice: '', startTime: '', endTime: '', selectedItems: [] });
+  
+  // --- [REQUIREMENT: 필터 상태 정의] ---
+  const [filters, setFilters] = useState({ 
+    paymentType: 'all', 
+    category: 'all',
+    minPrice: '', 
+    maxPrice: '', 
+    startTime: '', 
+    endTime: '', 
+    selectedItems: [] 
+  });
 
   const audioContextRef = useRef(null);
   const notifiedOrderIds = useRef(new Set());
@@ -116,7 +126,7 @@ const App = () => {
       osc.start(now + start); osc.stop(now + start + duration);
     };
     playTone(1318.51, 0.1, 0, 0.4); 
-    playTone(1567.98, 0.1, 0.1, 0.4); 
+    playTone(1567.98, 0.1, 0.08, 0.4); 
   };
 
   const toggleSound = () => {
@@ -126,9 +136,7 @@ const App = () => {
   };
 
   useEffect(() => {
-    // --- [REQUIREMENT 1: Dynamic Page Title Update] ---
     document.title = "부스 현장판매 관리 시스템";
-
     const authUnsubscribe = onAuthStateChanged(auth, (u) => {
       if (u) {
         setUser(u);
@@ -169,7 +177,7 @@ const App = () => {
         }
       }
       setOrders(sorted);
-    }, (err) => {
+    }, () => {
       setConnStatus('error');
     });
     return () => unsubscribe();
@@ -211,10 +219,9 @@ const App = () => {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), orderData);
       setProducts(JSON.parse(JSON.stringify(INITIAL_PRODUCTS)));
       setIsReceiptOpen(false);
-      // --- [REQUIREMENT 6: Single-line Toast Message] ---
       setShowToast("판매 내역 기록이 완료되었습니다.");
     } catch (err) {
-      setShowToast("저장 오류가 발생했습니다.");
+      setShowToast("저장 오류 발생");
     } finally {
       setIsSubmitting(false);
       setTimeout(() => setShowToast(null), 2500);
@@ -238,121 +245,111 @@ const App = () => {
       await batch.commit();
       setShowResetAuthModal(false);
       setResetPassword('');
-      setShowToast("데이터 초기화 완료");
+      setShowToast("장부 초기화 완료");
     } catch (err) { console.error(err); }
   };
 
-  // --- [REQUIREMENT 2 & 7: Advanced CSV Export with Robust Settlement] ---
   const downloadCSV = () => {
     if (orders.length === 0) return;
-    
-    // 1. 데이터 정순 정렬 (1번부터)
     const sortedOrders = [...orders].sort((a, b) => a.timestamp - b.timestamp);
-    
-    // 2. 카테고리별 합계 계산용 객체
-    const settlement = { "츠오미": 0, "꾸이꾸이": 0, "두근": 0, "기타": 0 };
-    
-    // CSV 헤더 구성 (요청사항대로 시간 제거)
-    const headers = ["번호", "유형", "카테고리", "내역", "금액"];
+    const revenueTable = { "츠오미": 0, "꾸이꾸이": 0, "두근": 0, "기타": 0 };
+    const lossTable = { "츠오미": 0, "꾸이꾸이": 0, "두근": 0, "기타": 0 };
+    const headers = ["번호", "유형", "상세 내역 (카테고리 연동)", "금액(원)"];
     
     const rows = sortedOrders.map((o, idx) => {
-      // 유형 한글화
       const payKo = o.paymentType === 'cash' ? '현금결제' : o.paymentType === 'transfer' ? '계좌이체' : '파손분실';
-      
-      // 내역 상세 포맷팅 (불렛 포인트 및 줄바꿈 적용)
-      const itemsDetail = o.items.map(it => `• ${it.name}(${it.count})`).join('\n');
-      
-      // 해당 주문에 포함된 고유 카테고리들
-      const catsInOrder = Array.from(new Set(o.items.map(it => getCategoryInfo(it.name).fullName))).join(', ');
-      
-      // 정산 금액 누적 (파손분실 'loss' 항목은 수익에서 제외)
-      if (o.paymentType !== 'loss') {
-        o.items.forEach(it => {
-          const cat = getCategoryInfo(it.name).fullName;
-          if (settlement.hasOwnProperty(cat)) {
-            settlement[cat] += (it.price * it.count);
-          }
-        });
-      }
+      const itemsDetail = o.items.map(it => {
+        const cat = getCategoryInfo(it.name).fullName;
+        const val = it.price * it.count;
+        if (o.paymentType === 'loss') lossTable[cat] += val; else revenueTable[cat] += val;
+        return `• [${cat}] ${it.name}(${it.count})`;
+      }).join('\n');
 
-      return [
-        idx + 1,
-        payKo,
-        catsInOrder,
-        `"${itemsDetail}"`, // 줄바꿈을 위해 큰따옴표 감싸기
-        o.total || o.lossValue
-      ];
+      return [idx + 1, payKo, `"${itemsDetail}"`, (o.total || o.lossValue)];
     });
 
-    // 3. 정산용 하단 표 분리 생성
-    const settlementRows = [
-      [], // 구분 공백
-      ["[ 카테고리별 최종 정산 내역 (파손/분실 제외) ]"],
-      ["카테고리", "총 합계 금액"],
-      ...Object.entries(settlement).map(([name, total]) => [name, `${total}원`]),
-      ["전체 판매 수익 총액", `${Object.values(settlement).reduce((a,b)=>a+b, 0)}원`]
+    const reportBottom = [
+      [], ["--- [ 1. 카테고리별 실제 판매 수익금 ] ---"], ["카테고리", "판매 수익 합계"],
+      ...Object.entries(revenueTable).map(([name, total]) => [name, `"${total.toLocaleString()}원"`]),
+      ["수익 총계", `"${Object.values(revenueTable).reduce((a,b)=>a+b, 0).toLocaleString()}원"`],
+      [], ["--- [ 2. 카테고리별 재고 손실액 (파손/분실) ] ---"], ["카테고리", "손실액 합계"],
+      ...Object.entries(lossTable).map(([name, total]) => [name, `"${total.toLocaleString()}원"`]),
+      ["손실 총계", `"${Object.values(lossTable).reduce((a,b)=>a+b, 0).toLocaleString()}원"`]
     ];
 
-    const csvContent = [headers, ...rows, ...settlementRows].map(e => e.join(",")).join("\n");
+    const csvContent = [headers, ...rows, ...reportBottom].map(e => e.join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `booth_final_settlement_${new Date().toLocaleDateString()}.csv`;
+    link.download = `booth_final_report_v6.7.csv`;
     link.click();
   };
 
+  // --- [REQUIREMENT: 필터링 로직 완전 복구] ---
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
+      // 1. 결제수단 필터
       if (filters.paymentType !== 'all' && order.paymentType !== filters.paymentType) return false;
-      const actualVal = order.total || order.lossValue;
-      if (filters.minPrice && actualVal < Number(filters.minPrice)) return false;
-      if (filters.maxPrice && actualVal > Number(filters.maxPrice)) return false;
       
+      // 2. 카테고리별 필터 (작가별 정산용)
+      if (filters.category !== 'all') {
+         const isIncluded = order.items.some(it => getCategoryInfo(it.name).fullName === filters.category);
+         if (!isIncluded) return false;
+      }
+
+      // 3. 금액 구간 필터
+      const val = order.total || order.lossValue;
+      if (filters.minPrice && val < Number(filters.minPrice)) return false;
+      if (filters.maxPrice && val > Number(filters.maxPrice)) return false;
+
+      // 4. 특정 시간대 필터
       if (filters.startTime || filters.endTime) {
-         const timeMatch = order.createdAt.match(/([오전후]+)\s(\d+):(\d+):(\d+)/);
-         if (timeMatch) {
-            let [_, ampm, h, m] = timeMatch;
-            let hour = parseInt(h);
-            if (ampm === "오후" && hour !== 12) hour += 12;
-            if (ampm === "오전" && hour === 12) hour = 0;
-            const totalMins = hour * 60 + parseInt(m);
-            if (filters.startTime) {
-               const [sh, sm] = filters.startTime.split(':').map(Number);
-               if (totalMins < sh * 60 + sm) return false;
-            }
-            if (filters.endTime) {
-               const [eh, em] = filters.endTime.split(':').map(Number);
-               if (totalMins > eh * 60 + em) return false;
-            }
-         }
+        const timeMatch = order.createdAt.match(/([오전후]+)\s(\d+):(\d+):(\d+)/);
+        if (timeMatch) {
+          let [_, ampm, h, m] = timeMatch;
+          let hour = parseInt(h);
+          if (ampm === "오후" && hour !== 12) hour += 12;
+          if (ampm === "오전" && hour === 12) hour = 0;
+          const currentTotalMins = hour * 60 + parseInt(m);
+
+          if (filters.startTime) {
+            const [sh, sm] = filters.startTime.split(':').map(Number);
+            if (currentTotalMins < sh * 60 + sm) return false;
+          }
+          if (filters.endTime) {
+            const [eh, em] = filters.endTime.split(':').map(Number);
+            if (currentTotalMins > eh * 60 + em) return false;
+          }
+        }
       }
+
+      // 5. 상품 항목별 드롭다운 체크리스트 필터
       if (filters.selectedItems.length > 0) {
-        const orderItemNames = order.items.map(it => it.name);
-        if (!filters.selectedItems.some(name => orderItemNames.includes(name))) return false;
+        if (!order.items.some(it => filters.selectedItems.includes(it.name))) return false;
       }
+
       return true;
     });
-  }, [orders, filters]);
+  }, [orders, filters, getCategoryInfo]);
 
-  if (isLoading) return <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white"><Loader2 className="animate-spin text-emerald-500 mb-4" size={40}/><p className="text-xs font-bold animate-pulse tracking-widest uppercase">System Initialization...</p></div>;
+  if (isLoading) return <div className="min-h-screen bg-black flex flex-col items-center justify-center text-white"><Loader2 className="animate-spin text-emerald-500 mb-4" size={40}/><p className="text-xs font-bold animate-pulse">Initializing System...</p></div>;
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-black font-sans pb-40">
-      {/* --- [REQUIREMENT 3: REFINED HEADER UI] --- */}
       <header className="sticky top-0 z-50 bg-black text-white px-4 py-3 shadow-2xl font-bold">
         <div className="w-full flex justify-between items-start mb-3">
           <div className="flex flex-col">
             <div className="flex items-baseline gap-2">
-               <h1 className="text-sm font-black tracking-tight">부스 현장판매 관리 시스템</h1>
-               <span className="text-[10px] font-bold text-zinc-400">V6.2</span>
+               <h1 className="text-[17px] font-black tracking-tight uppercase leading-none">부스 현장판매 관리 시스템</h1>
+               <span className="text-[12px] font-bold text-zinc-400">V6.7</span>
             </div>
-            <p className="text-[9px] text-zinc-500 font-bold mt-0.5">by. KUIKUI💀</p>
-            <div className="flex items-center gap-1.5 mt-1 opacity-60">
+            <p className="text-[10px] text-zinc-500 font-bold mt-1.5 opacity-80 italic">by. KUIKUI💀</p>
+            <div className="flex items-center gap-1.5 mt-2 opacity-40">
                {connStatus === 'connected' ? <Wifi size={8} className="text-emerald-500" /> : <WifiOff size={8} className="text-red-500" />}
-               <span className="text-[7px] font-mono tracking-tighter uppercase">{connStatus === 'connected' ? 'Connected' : 'Disconnected'}</span>
+               <span className="text-[7px] font-mono tracking-tighter uppercase font-bold">{connStatus === 'connected' ? 'Synced' : 'Offline'}</span>
             </div>
           </div>
-          <button onClick={toggleSound} className={`p-2 rounded-full transition-all active:scale-90 ${isSoundOn ? 'text-emerald-500 bg-emerald-500/10' : 'text-red-500 bg-red-500/10'}`}>
+          <button onClick={toggleSound} className={`p-2 rounded-full transition-all active:scale-90 ${isSoundOn ? 'text-emerald-500 bg-emerald-500/10' : 'text-red-500 bg-red-500/10 animate-pulse'}`}>
             {isSoundOn ? <Volume2 size={18} /> : <VolumeX size={18} />}
           </button>
         </div>
@@ -373,7 +370,6 @@ const App = () => {
               </div>
               <button onClick={() => setPaymentType('loss')} className={`w-full py-3 rounded-xl text-[11px] border-2 font-bold transition-all ${paymentType === 'loss' ? 'bg-red-600 text-white border-red-600 shadow-md' : 'bg-red-50 border-red-100 text-red-300'}`}><AlertCircle size={13} className="inline mr-1"/> 파손 / 분실 체크 모드</button>
             </div>
-
             {Object.entries(products).map(([cat, items]) => (
               <section key={cat} className="space-y-3 font-bold">
                 <h2 className="text-base font-black border-l-[4px] border-black pl-2">{cat}</h2>
@@ -385,11 +381,11 @@ const App = () => {
                         <p className="text-[10px] font-bold opacity-40 font-mono">{formatPrice(p.price)}원 / {p.unit}</p>
                       </div>
                       <div className="flex items-center justify-center gap-1 bg-white/40 p-1.5 rounded-xl w-full max-w-[280px]">
-                        <button onClick={() => updateCount(cat, p.id, -5)} className="w-10 h-10 bg-black text-white rounded-lg flex items-center justify-center shadow-sm active:scale-90"><ChevronsDown size={18}/></button>
-                        <button onClick={() => updateCount(cat, p.id, -1)} className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm active:scale-90"><ChevronDown size={18}/></button>
-                        <div className="flex-1 text-center font-black text-lg tabular-nums">{p.count}</div>
-                        <button onClick={() => updateCount(cat, p.id, 1)} className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm active:scale-90"><ChevronUp size={18}/></button>
-                        <button onClick={() => updateCount(cat, p.id, 5)} className="w-10 h-10 bg-black text-white rounded-lg flex items-center justify-center shadow-sm active:scale-90"><ChevronsUp size={18}/></button>
+                        <button onClick={() => updateCount(cat, p.id, -5)} className="w-10 h-10 bg-black text-white rounded-lg flex items-center justify-center active:scale-90 shadow-sm"><ChevronsDown size={18}/></button>
+                        <button onClick={() => updateCount(cat, p.id, -1)} className="w-10 h-10 bg-white rounded-lg flex items-center justify-center active:scale-90 shadow-sm"><ChevronDown size={18}/></button>
+                        <div className="flex-1 text-center font-black text-xl tabular-nums bg-white h-10 rounded-lg flex items-center justify-center shadow-inner mx-1">{p.count}</div>
+                        <button onClick={() => updateCount(cat, p.id, 1)} className="w-10 h-10 bg-white rounded-lg flex items-center justify-center active:scale-90 shadow-sm"><ChevronUp size={18}/></button>
+                        <button onClick={() => updateCount(cat, p.id, 5)} className={`w-10 h-10 rounded-lg active:scale-90 shadow-md ${paymentType === 'loss' ? 'bg-red-600 text-white' : 'bg-black text-white'}`}><ChevronsUp size={18}/></button>
                       </div>
                     </div>
                   ))}
@@ -400,7 +396,7 @@ const App = () => {
         )}
 
         {viewMode === 'packing' && (
-          <div className="space-y-5 pb-20 font-bold">
+          <div className="space-y-5 pb-20 font-bold animate-in slide-in-from-bottom-10">
             <h2 className="text-xl font-black italic border-b-2 border-black pb-2">포장 대기 목록</h2>
             {orders.filter(o => o.status === 'pending').length === 0 ? (
                <div className="py-24 text-center text-zinc-300 italic">현재 대기 주문이 없습니다.</div>
@@ -413,12 +409,9 @@ const App = () => {
                    </div>
                    <div className="space-y-1.5 mb-6 bg-zinc-50 p-4 rounded-xl border border-zinc-100 font-bold">
                       {order.items.map((it, idx) => (
-                        <div key={idx} onClick={() => { const k = `${order.id}-${idx}`; setPackingChecked(prev => ({ ...prev, [k]: !prev[k] })); }} className={`flex justify-between text-[13px] font-bold border-b border-zinc-200/40 last:border-0 py-2 cursor-pointer transition-all ${packingChecked[`${order.id}-${idx}`] ? 'opacity-20 line-through text-zinc-400' : ''}`}>
-                          <span className="flex items-center gap-2">
-                             <div className={`w-1.5 h-1.5 rounded-full ${packingChecked[`${order.id}-${idx}`] ? 'bg-zinc-300' : 'bg-black animate-pulse'}`} />
-                             {it.name}
-                          </span>
-                          <span className="bg-black text-white px-2.5 py-0.5 rounded-lg text-[10px]">x {it.count}</span>
+                        <div key={idx} onClick={() => { const k = `${order.id}-${idx}`; setPackingChecked(prev => ({ ...prev, [k]: !prev[k] })); }} className={`flex justify-between items-center text-[13px] font-bold py-2 border-b border-zinc-200 last:border-0 cursor-pointer transition-all ${packingChecked[`${order.id}-${idx}`] ? 'opacity-20 line-through' : 'text-black'}`}>
+                          <span className="truncate pr-3 flex items-center gap-1.5 font-bold font-black"><div className={`w-1.5 h-1.5 rounded-full ${packingChecked[`${order.id}-${idx}`] ? 'bg-zinc-300' : 'bg-black animate-pulse'}`}></div>{it.name}</span>
+                          <span className="bg-black text-white px-2 py-0.5 rounded-lg text-[10px]">x {it.count}</span>
                         </div>
                       ))}
                    </div>
@@ -430,153 +423,137 @@ const App = () => {
         )}
 
         {viewMode === 'history' && (
-          <div className="space-y-5 pb-20 font-bold">
+          <div className="space-y-5 pb-20 font-bold animate-in fade-in">
             <div className="flex justify-between items-center px-1 font-bold">
-              <div className="flex flex-col">
-                <h2 className="text-xl font-black">통합 판매 장부</h2>
-                <span className="text-[8px] opacity-40 uppercase tracking-widest font-mono">Real-time DB Sync</span>
+              <div className="flex flex-col font-bold">
+                <h2 className="text-xl font-black uppercase">판매 장부</h2>
+                <span className="text-[8px] opacity-40 uppercase tracking-widest font-mono font-bold mt-1">Total {filteredOrders.length} Records</span>
               </div>
-              <div className="flex gap-2 font-bold">
+              <div className="flex gap-2">
                 <button onClick={downloadCSV} className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shadow-sm hover:bg-emerald-100 transition-all font-bold"><Download size={20} /></button>
                 <button onClick={() => setIsFilterOpen(!isFilterOpen)} className={`p-2.5 rounded-xl shadow-sm transition-all font-bold ${isFilterOpen ? 'bg-black text-white' : 'bg-white border'}`}><Filter size={20} /></button>
                 <button onClick={() => setShowResetAuthModal(true)} className="p-2.5 bg-red-50 text-red-500 rounded-xl shadow-sm hover:bg-red-100 transition-all font-bold"><RotateCcw size={20} /></button>
               </div>
             </div>
 
-            {/* --- [REQUIREMENT 4: SEARCH FILTER RESTORED] --- */}
+            {/* --- [REQUIREMENT: 검색 필터 UI 완전 복구] --- */}
             {isFilterOpen && (
-              <div className="bg-white border-2 border-black p-5 rounded-[28px] shadow-2xl space-y-5 font-bold animate-in slide-in-from-top-4 overflow-hidden">
+              <div className="bg-white border-2 border-black p-5 rounded-[28px] shadow-2xl space-y-5 font-bold animate-in slide-in-from-top-4">
                 <div className="flex justify-between items-center border-b pb-2">
-                   <h3 className="text-xs font-black uppercase tracking-widest">Search Filter</h3>
-                   <button onClick={() => setIsFilterOpen(false)}><X size={16} /></button>
+                   <h3 className="text-xs font-black uppercase tracking-widest font-bold">상세 검색 필터</h3>
+                   <button onClick={() => setIsFilterOpen(false)}><X size={20} /></button>
                 </div>
                 <div className="space-y-4">
-                   <div className="flex flex-col gap-1.5 font-bold">
-                      <label className="text-[9px] font-black opacity-30 uppercase ml-1">결제수단</label>
-                      <select value={filters.paymentType} onChange={(e) => setFilters({...filters, paymentType: e.target.value})} className="w-full bg-zinc-50 border-none rounded-xl p-3.5 text-xs font-bold outline-none ring-1 ring-zinc-100">
-                        <option value="all">전체 내역</option>
-                        <option value="cash">현금결제 내역</option>
-                        <option value="transfer">계좌이체 내역</option>
-                        <option value="loss">파손/분실 내역</option>
-                      </select>
-                   </div>
-                   <div className="grid grid-cols-2 gap-2 font-bold">
-                      <div className="flex flex-col gap-1.5 font-bold">
-                         <label className="text-[9px] font-black opacity-30 uppercase ml-1">최소 금액</label>
-                         <input type="number" placeholder="0" value={filters.minPrice} onChange={(e) => setFilters({...filters, minPrice: e.target.value})} className="w-full bg-zinc-50 rounded-xl p-3 text-xs outline-none ring-1 ring-zinc-100 font-bold" />
+                   <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                         <label className="text-[9px] font-black text-zinc-400 uppercase ml-1">결제 구분</label>
+                         <select value={filters.paymentType} onChange={(e) => setFilters({...filters, paymentType: e.target.value})} className="w-full bg-zinc-50 border-none rounded-xl p-3 text-[11px] font-bold focus:ring-1 focus:ring-black">
+                           <option value="all">전체 수단</option><option value="cash">현금결제</option><option value="transfer">계좌이체</option><option value="loss">파손/분실</option>
+                         </select>
                       </div>
-                      <div className="flex flex-col gap-1.5 font-bold">
-                         <label className="text-[9px] font-black opacity-30 uppercase ml-1">최대 금액</label>
-                         <input type="number" placeholder="MAX" value={filters.maxPrice} onChange={(e) => setFilters({...filters, maxPrice: e.target.value})} className="w-full bg-zinc-50 rounded-xl p-3 text-xs outline-none ring-1 ring-zinc-100 font-bold" />
+                      <div className="flex flex-col gap-1">
+                         <label className="text-[9px] font-black text-zinc-400 uppercase ml-1">카테고리</label>
+                         <select value={filters.category} onChange={(e) => setFilters({...filters, category: e.target.value})} className="w-full bg-zinc-50 border-none rounded-xl p-3 text-[11px] font-bold focus:ring-1 focus:ring-black">
+                           <option value="all">전체 품목</option>
+                           {Object.keys(INITIAL_PRODUCTS).map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                         </select>
                       </div>
                    </div>
-                   <div className="grid grid-cols-2 gap-2 font-bold">
-                      <div className="flex flex-col gap-1.5 font-bold">
-                         <label className="text-[9px] font-black opacity-30 uppercase ml-1">시작 시간</label>
-                         <input type="time" value={filters.startTime} onChange={(e) => setFilters({...filters, startTime: e.target.value})} className="w-full bg-zinc-50 rounded-xl p-3 text-xs outline-none ring-1 ring-zinc-100 font-bold" />
-                      </div>
-                      <div className="flex flex-col gap-1.5 font-bold">
-                         <label className="text-[9px] font-black opacity-30 uppercase ml-1">종료 시간</label>
-                         <input type="time" value={filters.endTime} onChange={(e) => setFilters({...filters, endTime: e.target.value})} className="w-full bg-zinc-50 rounded-xl p-3 text-xs outline-none ring-1 ring-zinc-100 font-bold" />
+                   <div className="flex flex-col gap-1">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase ml-1">시간대 검색</label>
+                      <div className="flex items-center gap-2">
+                        <input type="time" value={filters.startTime} onChange={(e) => setFilters({...filters, startTime: e.target.value})} className="flex-1 bg-zinc-50 rounded-xl p-3 text-[11px] font-bold outline-none" />
+                        <span className="text-zinc-300">~</span>
+                        <input type="time" value={filters.endTime} onChange={(e) => setFilters({...filters, endTime: e.target.value})} className="flex-1 bg-zinc-50 rounded-xl p-3 text-[11px] font-bold outline-none" />
                       </div>
                    </div>
-                   <div className="flex flex-col gap-1.5 font-bold">
-                      <label className="text-[9px] font-black opacity-30 uppercase ml-1">상품별 체크리스트</label>
-                      <div className="bg-zinc-50 p-3 rounded-xl max-h-32 overflow-y-auto grid grid-cols-1 gap-1 border border-zinc-100 font-bold">
-                         {ALL_ITEM_NAMES.map(name => (
-                           <label key={name} className="flex items-center gap-2 text-[10px] cursor-pointer hover:bg-white p-1 rounded font-bold">
-                              <input 
-                                type="checkbox" 
-                                checked={filters.selectedItems.includes(name)}
-                                onChange={(e) => {
-                                  const next = e.target.checked 
-                                    ? [...filters.selectedItems, name] 
-                                    : filters.selectedItems.filter(i => i !== name);
-                                  setFilters({...filters, selectedItems: next});
-                                }}
-                                className="w-3 h-3 rounded"
-                              />
-                              <span className="truncate font-bold">{name}</span>
-                           </label>
-                         ))}
+                   <div className="flex flex-col gap-1">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase ml-1">금액 구간</label>
+                      <div className="flex items-center gap-2">
+                        <input type="number" placeholder="최소" value={filters.minPrice} onChange={(e) => setFilters({...filters, minPrice: e.target.value})} className="flex-1 bg-zinc-50 rounded-xl p-3 text-[11px] font-bold outline-none" />
+                        <input type="number" placeholder="최대" value={filters.maxPrice} onChange={(e) => setFilters({...filters, maxPrice: e.target.value})} className="flex-1 bg-zinc-50 rounded-xl p-3 text-[11px] font-bold outline-none" />
+                      </div>
+                   </div>
+                   <div className="flex flex-col gap-1">
+                      <label className="text-[9px] font-black text-zinc-400 uppercase ml-1">상품별 필터</label>
+                      <div className="bg-zinc-50 p-3 rounded-xl max-h-40 overflow-y-auto grid grid-cols-1 gap-1 border border-zinc-100 font-bold">
+                        {ALL_ITEM_LIST.map(name => (
+                          <label key={name} className="flex items-center gap-2 text-[10px] cursor-pointer hover:bg-white p-1 rounded font-bold">
+                             <input type="checkbox" checked={filters.selectedItems.includes(name)} onChange={(e) => { const next = e.target.checked ? [...filters.selectedItems, name] : filters.selectedItems.filter(i => i !== name); setFilters({...filters, selectedItems: next}); }} className="w-4 h-4 rounded text-black border-zinc-300 focus:ring-black" />
+                             <span className="truncate">{name}</span>
+                          </label>
+                        ))}
                       </div>
                    </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 font-bold">
-                   <button onClick={() => setFilters({paymentType:'all', minPrice:'', maxPrice:'', startTime:'', endTime:'', selectedItems:[]})} className="py-3.5 bg-zinc-100 text-zinc-400 rounded-2xl font-black text-xs font-bold">초기화</button>
-                   <button onClick={() => setIsFilterOpen(false)} className="py-3.5 bg-black text-white rounded-2xl font-black text-xs shadow-lg active:scale-95 transition-all font-bold">검색 적용</button>
+                <div className="grid grid-cols-2 gap-2">
+                   <button onClick={() => setFilters({paymentType:'all',category:'all',minPrice:'',maxPrice:'',startTime:'',endTime:'',selectedItems:[]})} className="py-3.5 bg-zinc-100 text-zinc-400 rounded-2xl font-black text-xs font-bold active:scale-95 transition-all">초기화</button>
+                   <button onClick={() => setIsFilterOpen(false)} className="py-3.5 bg-black text-white rounded-2xl font-black text-xs shadow-lg active:scale-95 transition-all">검색 적용</button>
                 </div>
               </div>
             )}
 
-            <div className="space-y-4 font-bold">
-              {filteredOrders.length === 0 ? (
-                <div className="py-20 text-center text-zinc-300 italic text-sm font-bold">해당하는 내역이 없습니다.</div>
-              ) : (
-                filteredOrders.map(order => (
-                  // --- [REQUIREMENT 1: Red Display for Loss] ---
-                  <div key={order.id} className={`bg-white border rounded-[24px] p-5 shadow-sm border-l-[12px] ${order.status === 'packed' ? 'border-l-zinc-200 opacity-60' : (order.paymentType === 'loss' ? 'border-l-red-600 shadow-xl' : 'border-l-emerald-500 shadow-md')}`}>
-                    <div className="flex justify-between items-center mb-3 opacity-70 font-black">
-                       <span className="flex items-center gap-1.5 font-bold">
-                          {/* --- [REQUIREMENT 2: Korean Payment Translation] --- */}
-                          <span className={`text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded-md font-bold ${order.paymentType === 'loss' ? 'bg-red-50 text-red-600' : 'bg-zinc-100 text-zinc-500'}`}>
-                             {order.paymentType === 'transfer' ? '계좌이체' : order.paymentType === 'cash' ? '현금결제' : '파손/분실'}
+            <div className="space-y-4">
+              {filteredOrders.map(order => (
+                <div key={order.id} className={`bg-white border rounded-[22px] p-5 shadow-sm border-l-[12px] ${order.status === 'packed' ? 'border-l-zinc-200 opacity-60' : (order.paymentType === 'loss' ? 'border-l-red-600 shadow-xl' : 'border-l-emerald-500 shadow-md')}`}>
+                   <div className="flex justify-between items-center mb-3 opacity-70 font-black">
+                      <span className="flex items-center gap-1.5 font-bold">
+                         <span className={`text-[10px] uppercase tracking-tighter px-2 py-0.5 rounded-md font-black ${order.paymentType === 'loss' ? 'bg-red-50 text-red-600' : 'bg-zinc-100 text-zinc-500'}`}>
+                            {order.paymentType === 'transfer' ? '계좌이체' : order.paymentType === 'cash' ? '현금결제' : '파손/분실'}
+                         </span>
+                         <span className="text-[9px] font-bold">No.{order.orderNo}</span>
+                      </span>
+                      <span className="text-[9px] font-mono italic font-bold">{order.createdAt}</span>
+                   </div>
+                   <div className="space-y-1.5 mb-3 text-[12px] font-bold">
+                      {order.items.map((it, idx) => (
+                        <div key={idx} className="flex justify-between items-center">
+                          <span className="flex items-center gap-1.5 truncate pr-4">
+                             <span className={`${getCategoryInfo(it.name).color} text-[8px] px-1.5 py-0.5 rounded font-black border border-black/5`}>[{getCategoryInfo(it.name).char}]</span>
+                             <span className={order.paymentType === 'loss' ? 'text-red-700 font-bold' : ''}>{it.name} x{it.count}</span>
                           </span>
-                          <span className="text-[9px] opacity-40">No.{order.orderNo}</span>
-                       </span>
-                       <span className="text-[9px] font-mono italic">{order.createdAt}</span>
-                    </div>
-                    <div className="space-y-1.5 mb-4 text-[12px] font-bold">
-                       {order.items.map((it, idx) => (
-                         <div key={idx} className="flex justify-between items-center">
-                           <span className="flex items-center gap-1.5 truncate pr-4">
-                              <span className={`${getCategoryInfo(it.name).color} text-[8px] px-1.5 py-0.5 rounded font-black border border-black/5`}>[{getCategoryInfo(it.name).char}]</span>
-                              <span className={order.paymentType === 'loss' ? 'text-red-700 font-bold' : ''}>{it.name} x{it.count}</span>
-                           </span>
-                           <span className="text-zinc-400 font-mono text-[11px] shrink-0">{formatPrice(it.price * it.count)}</span>
-                         </div>
-                       ))}
-                    </div>
-                    <div className="flex justify-between items-center border-t border-zinc-50 pt-3">
-                       {/* --- [REQUIREMENT 3: Packaging Status Re-added] --- */}
-                       <div className={`flex items-center gap-1.5 text-[9px] font-black ${order.status === 'packed' ? 'text-zinc-400' : 'text-emerald-600 animate-pulse'}`}>
-                          {order.status === 'packed' ? <Check size={12}/> : <Loader2 size={12} className="animate-spin" />}
-                          {order.status === 'packed' ? '포장완료' : '포장대기'}
-                       </div>
-                       <div className={`font-black text-lg tabular-nums ${order.paymentType === 'loss' ? 'text-red-600' : 'text-black'}`}>
-                          {formatPrice(order.total || order.lossValue)}원
-                       </div>
-                    </div>
-                  </div>
-                ))
-              )}
+                          <span className="text-zinc-400 font-mono text-[11px] shrink-0 font-bold">{formatPrice(it.price * it.count)}</span>
+                        </div>
+                      ))}
+                   </div>
+                   <div className="flex justify-between items-center border-t border-zinc-50 pt-2.5 font-bold">
+                      <div className={`flex items-center gap-1.5 text-[9px] font-black ${order.status === 'packed' ? 'text-zinc-300' : 'text-emerald-600 animate-pulse'}`}>
+                         {order.status === 'packed' ? <Check size={12}/> : <Loader2 size={12} className="animate-spin" />}
+                         {order.status === 'packed' ? '포장완료' : '포장대기'}
+                      </div>
+                      <div className={`font-black text-lg tabular-nums ${order.paymentType === 'loss' ? 'text-red-600' : 'text-black'}`}>
+                         {formatPrice(order.total || order.lossValue)}원
+                      </div>
+                   </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
       </main>
 
-      {/* --- [REQUIREMENT 5: Floating Receipt Height Adjustments] --- */}
+      {/* --- [REQUIREMENT: 영수증 높이 및 디자인 보정] --- */}
       {viewMode === 'counter' && (
         <div className={`fixed bottom-0 left-0 right-0 z-40 transition-transform duration-500 ease-in-out ${isReceiptOpen ? 'translate-y-0' : 'translate-y-[calc(100%-65px)]'}`}>
-          <div className="max-w-xl mx-auto px-4">
+          <div className="max-w-xl mx-auto px-4 font-bold">
             <div className="flex justify-center">
-              <button onClick={() => setIsReceiptOpen(!isReceiptOpen)} className="bg-black text-white px-10 py-3 rounded-t-[32px] flex items-center justify-center gap-2 font-black border-t border-white/10 shadow-[0_-20px_40px_rgba(0,0,0,0.35)] active:scale-95 transition-transform">
+              <button onClick={() => setIsReceiptOpen(!isReceiptOpen)} className="bg-black text-white px-10 py-3 rounded-t-[32px] flex items-center justify-center gap-2 font-black border-t border-white/10 shadow-[0_-20px_40px_rgba(0,0,0,0.35)] active:scale-95 transition-transform font-bold">
                 {isReceiptOpen ? <ChevronDown size={22} /> : <ChevronUp size={22} />}
                 <span className="text-[11px] uppercase tracking-widest leading-none font-bold">영수증 보기/접기 ({receiptItems.items.length}종)</span>
               </button>
             </div>
-            {/* max-height restricted to 70vh and overflow auto to allow folding button access */}
+            {/* max-height 70vh 보정으로 모바일 접기 버튼 접근성 확보 */}
             <div className="bg-white border-x-[8px] border-black p-8 h-auto max-h-[70vh] shadow-2xl rounded-t-sm font-bold overflow-y-auto">
               <div className="flex items-center gap-2 mb-6 opacity-30 font-black">
                  <Receipt size={18} />
-                 <h3 className="text-[10px] uppercase tracking-[3px]">Current Order Log</h3>
+                 <h3 className="text-[10px] uppercase tracking-[3px]">Current Order Details</h3>
               </div>
               <div className="space-y-4 mb-10 border-b-2 border-dashed border-zinc-100 pb-8 font-bold">
                 {receiptItems.items.map(item => (
                   <div key={item.id} className="flex justify-between items-center text-[15px] animate-in slide-in-from-bottom-2 font-bold">
                     <span className="truncate pr-4 flex items-center gap-2 font-bold">
-                       <span className="text-[9px] opacity-30 font-black shrink-0">[{getCategoryInfo(item.name).char}]</span>
-                       <span className="truncate font-bold">{item.name}</span>
+                       <span className="text-[9px] opacity-30 font-black shrink-0 font-bold font-black">[{getCategoryInfo(item.name).char}]</span>
+                       <span className="truncate font-bold font-black">{item.name}</span>
                        <span className="opacity-40 text-[11px] font-mono shrink-0 ml-1 font-bold text-zinc-500">x{item.count}</span>
                     </span>
                     <span className="font-mono text-zinc-400 shrink-0 font-bold">{formatPrice(item.itemTotal)}</span>
@@ -585,27 +562,21 @@ const App = () => {
                 {receiptItems.items.length === 0 && (
                   <div className="py-16 text-center flex flex-col items-center gap-2 opacity-15 font-bold">
                      <Receipt size={40} />
-                     <p className="text-xs italic font-bold">상품을 담아주세요.</p>
+                     <p className="text-xs italic font-bold">선택된 상품이 없습니다.</p>
                   </div>
                 )}
               </div>
               <div className="flex flex-col items-end gap-1 mb-10 font-bold">
-                <span className="text-[10px] font-black text-zinc-300 uppercase tracking-widest font-bold">Total Amount</span>
+                <span className="text-[10px] font-black text-zinc-300 uppercase tracking-widest font-bold">최종 합계 금액</span>
                 <span className={`text-5xl font-black tracking-tighter ${paymentType === 'loss' ? 'text-red-600' : 'text-black'} tabular-nums font-bold`}>{formatPrice(receiptItems.total)}원</span>
               </div>
-              
-              {/* --- [REQUIREMENT 7: Button Label Update] --- */}
               <button 
                 disabled={receiptItems.items.length === 0 || isSubmitting || connStatus !== 'connected'} 
                 onClick={handleConfirmOrder} 
                 className={`w-full py-6 rounded-[28px] font-black text-xl flex items-center justify-center gap-3 transition-all shadow-xl shadow-emerald-50 ${receiptItems.items.length > 0 && connStatus === 'connected' ? 'bg-emerald-600 text-white active:scale-95' : 'bg-zinc-100 text-zinc-300 cursor-not-allowed'} font-bold`}
               >
-                {isSubmitting ? (
-                  <Loader2 className="animate-spin" size={28} />
-                ) : (
-                  paymentType === 'loss' ? <AlertCircle size={28}/> : <Check size={32} />
-                )}
-                <span className="font-bold">{connStatus !== 'connected' ? '네트워크 확인 중' : isSubmitting ? '전송 중...' : '판매완료'}</span>
+                {isSubmitting ? <Loader2 className="animate-spin" size={28} /> : (paymentType === 'loss' ? <AlertCircle size={28}/> : <Check size={32} />)}
+                <span className="font-bold">{connStatus !== 'connected' ? '네트워크 대기 중' : isSubmitting ? '기록 중...' : '판매완료'}</span>
               </button>
             </div>
           </div>
@@ -616,34 +587,33 @@ const App = () => {
       {showResetAuthModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md font-bold">
            <div className="bg-white w-full max-w-sm rounded-[36px] p-10 text-center border-t-[12px] border-red-600 shadow-2xl font-bold">
-              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6"><Lock size={32} className="text-red-600" /></div>
-              <h3 className="text-lg font-black mb-3 underline decoration-red-200 underline-offset-4 font-bold uppercase">DATABASE CLEANUP</h3>
-              <p className="text-[11px] opacity-50 mb-8 leading-relaxed font-bold">데이터를 복구할 수 없습니다.<br/>관리자 비밀번호를 입력하십시오.</p>
-              <input type="password" placeholder="****" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} className="w-full bg-zinc-50 border-2 rounded-2xl p-4 text-center text-4xl mb-6 outline-none font-black font-mono tracking-[10px] focus:ring-4 ring-red-50 transition-all font-bold" />
-              <div className="flex flex-col gap-2 font-bold">
-                <button onClick={handleGlobalReset} className="py-4.5 bg-red-600 text-white rounded-2xl font-black active:scale-95 transition-all shadow-lg shadow-red-50 font-bold">기록 완전 삭제</button>
-                <button onClick={() => {setShowResetAuthModal(false); setResetPassword('');}} className="py-4.5 bg-zinc-100 text-zinc-400 rounded-2xl font-bold active:scale-95 transition-all font-bold">취소</button>
+              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6 font-bold font-black"><Lock size={32} className="text-red-600" /></div>
+              <h3 className="text-lg font-black mb-3 underline decoration-red-100 font-bold uppercase">DATABASE CLEANUP</h3>
+              <p className="text-zinc-500 text-[11px] mb-8 font-bold leading-relaxed font-bold">모든 데이터가 삭제됩니다.<br/>관리자 비밀번호($0927$)를 입력하세요.</p>
+              <input type="password" placeholder="****" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} className="w-full bg-zinc-50 border-2 border-zinc-100 rounded-[20px] p-4 text-center font-black text-3xl mb-5 focus:border-red-600 transition-all outline-none font-bold font-black" />
+              <div className="flex flex-col gap-2 font-bold font-black">
+                <button onClick={handleGlobalReset} className="w-full py-4.5 bg-red-600 text-white rounded-[20px] font-black shadow-lg shadow-red-200 active:scale-95 transition-all font-bold font-black">기록 삭제</button>
+                <button onClick={() => {setShowResetAuthModal(false); setResetPassword('');}} className="w-full py-4.5 bg-zinc-100 text-zinc-400 rounded-2xl font-bold active:scale-95 transition-all font-bold font-black">취소</button>
               </div>
            </div>
         </div>
       )}
 
       {showNewOrderPopup && viewMode === 'packing' && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md font-bold">
-          <div className="bg-white rounded-[48px] p-12 shadow-2xl text-center max-w-sm w-full animate-in zoom-in duration-300 border-[10px] border-black font-bold">
-             <BellRing size={64} className="text-emerald-600 animate-bounce mx-auto mb-8 font-bold" />
-             <h3 className="text-2xl font-black mb-2 tracking-tighter font-bold">새로운 주문 도착!</h3>
-             <p className="text-zinc-500 text-xs mb-10 font-bold">방금 판매가 기록되었습니다.<br/>즉시 포장을 시작해 주십시오.</p>
-             <button onClick={() => setShowNewOrderPopup(false)} className="w-full py-5 bg-black text-white rounded-3xl font-black text-lg shadow-xl active:scale-95 transition-all font-bold">확인</button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md animate-in fade-in duration-300 font-black font-bold">
+          <div className="bg-white rounded-[42px] p-10 shadow-2xl text-center max-w-sm w-full animate-in zoom-in duration-300 border-[8px] border-black font-black font-bold">
+             <BellRing size={56} className="text-emerald-600 animate-bounce mx-auto mb-6" />
+             <h3 className="text-2xl font-black mb-2 font-black font-bold">새 주문 도착!</h3>
+             <p className="text-zinc-500 text-xs mb-10 font-bold leading-relaxed">결제가 완료되었습니다.<br/>즉시 포장을 시작해 주세요.</p>
+             <button onClick={() => setShowNewOrderPopup(false)} className="w-full py-4.5 bg-black text-white rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all font-black font-bold">확인</button>
           </div>
         </div>
       )}
 
-      {/* --- [REQUIREMENT 6: Single-line Toast Message] --- */}
       {showToast && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-zinc-900 text-white px-8 py-4 rounded-full shadow-2xl text-[11px] font-bold animate-in fade-in slide-in-from-top-6 flex items-center gap-3 whitespace-nowrap font-bold">
-          <Check size={16} className="text-emerald-500 shrink-0 font-bold" />
-          <span className="font-bold">{showToast}</span>
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-zinc-900 text-white px-8 py-3.5 rounded-full shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-10 whitespace-nowrap font-bold font-black">
+          <Check size={18} className="text-emerald-500 shrink-0" /> 
+          <span className="text-[11px] font-black tracking-tight font-black font-bold">{showToast}</span>
         </div>
       )}
     </div>
