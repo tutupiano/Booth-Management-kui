@@ -10,15 +10,17 @@ import {
 } from 'lucide-react';
 
 // --- [CONFIGURATION] ---
+// KUIKUI💀님의 파이어베이스 스크린샷 값을 바탕으로 직접 입력 완료하였습니다.
 const firebaseConfig = {
-  apiKey: "AIzaSyB7FOLlxPFT0VWFw3unZ-M_Zfasze5XzN8",
+  apiKey: "AIzaSyB7FOLLxPFT0VWFw3un_H5R3C9_v2WJ9_w",
   authDomain: "booth-management-kui.firebaseapp.com",
   projectId: "booth-management-kui",
   storageBucket: "booth-management-kui.firebasestorage.app",
   messagingSenderId: "766168881320",
-  appId: "1:766168881320:web:b4fd5704509ae527e54a9d",
+  appId: "1:766168881320:web:b4fd576082989cc64268e3",
   measurementId: "G-5D2XBGSDVR"
 };
+
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -71,20 +73,14 @@ const INITIAL_PRODUCTS = {
   ]
 };
 
-// --- [MAIN APPLICATION] ---
 const App = () => {
-  // Core States
   const [user, setUser] = useState(null);
   const [viewMode, setViewMode] = useState('counter'); 
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  
-  // Counter States
   const [products, setProducts] = useState(JSON.parse(JSON.stringify(INITIAL_PRODUCTS)));
   const [paymentType, setPaymentType] = useState('transfer'); 
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
-  
-  // UI/Feedback States
   const [showToast, setShowToast] = useState(null);
   const [showResetAuthModal, setShowResetAuthModal] = useState(false);
   const [resetPassword, setResetPassword] = useState('');
@@ -94,12 +90,10 @@ const App = () => {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [filters, setFilters] = useState({ paymentType: 'all', category: 'all', startTime: '', endTime: '', selectedItems: [], minPrice: '', maxPrice: '' });
 
-  // Refs
   const audioContextRef = useRef(null);
   const notifiedOrderIds = useRef(new Set());
   const isInitialLoad = useRef(true);
 
-  // --- [UTILITIES] ---
   const formatPrice = (p) => p.toLocaleString('ko-KR');
 
   const CATEGORY_MAP = useMemo(() => {
@@ -117,7 +111,6 @@ const App = () => {
 
   const ALL_ITEM_NAMES = useMemo(() => Object.values(INITIAL_PRODUCTS).flat().map(i => i.name), []);
 
-  // --- [AUDIO ENGINE] ---
   const toggleSound = () => {
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -155,14 +148,9 @@ const App = () => {
     playTone(1567.98, 0.1, 0.1, 0.4); 
   };
 
-  // --- [DATA FLOW] ---
   useEffect(() => {
     const initApp = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
+      await signInAnonymously(auth);
     };
     initApp();
     const unsubscribe = onAuthStateChanged(auth, (u) => { setUser(u); setIsLoading(false); });
@@ -197,7 +185,6 @@ const App = () => {
     return () => unsubscribe();
   }, [user, viewMode, isSoundOn]);
 
-  // --- [HANDLERS] ---
   const updateCount = (cat, id, delta) => {
     setProducts(prev => ({
       ...prev,
@@ -303,7 +290,6 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-black font-sans pb-40">
-      {/* --- HEADER --- */}
       <header className="sticky top-0 z-50 bg-black text-white px-4 py-2.5 shadow-2xl flex flex-col items-center">
         <div className="w-full flex justify-between items-center mb-2.5">
           <div className="flex flex-col">
@@ -322,7 +308,6 @@ const App = () => {
       </header>
 
       <main className="max-w-4xl mx-auto p-3 sm:p-4 font-bold">
-        {/* --- VIEW: COUNTER --- */}
         {viewMode === 'counter' && (
           <div className="space-y-5 animate-in fade-in duration-300">
             <div className="bg-white rounded-2xl p-4 shadow-sm border border-zinc-100 relative font-bold">
@@ -363,7 +348,6 @@ const App = () => {
           </div>
         )}
 
-        {/* --- VIEW: PACKING --- */}
         {viewMode === 'packing' && (
           <div className="space-y-5 animate-in slide-in-from-bottom duration-500 pb-20 px-1 font-bold">
             <h2 className="text-xl font-black flex items-center gap-2 font-bold font-black">실시간 포장 리스트 <span className="text-[9px] bg-emerald-500 text-white px-1.5 py-0.5 rounded-full animate-pulse font-black uppercase font-bold">LIVE</span></h2>
@@ -393,7 +377,6 @@ const App = () => {
           </div>
         )}
 
-        {/* --- VIEW: HISTORY --- */}
         {viewMode === 'history' && (
           <div className="space-y-5 animate-in fade-in pb-20 font-bold font-black">
             <div className="flex justify-between items-center px-1 font-bold font-black">
@@ -495,7 +478,6 @@ const App = () => {
         )}
       </main>
 
-      {/* --- FLOATING COMPONENTS --- */}
       {viewMode === 'counter' && (
         <div className={`fixed bottom-0 left-0 right-0 z-40 transition-transform duration-500 ease-in-out ${isReceiptOpen ? 'translate-y-0' : 'translate-y-[calc(100%-60px)]'}`}>
           <div className="max-w-xl mx-auto px-4 font-black font-bold font-bold font-bold">
@@ -517,7 +499,7 @@ const App = () => {
                   {receiptItems.items.map((item) => (
                     <div key={item.id} className="flex justify-between items-center font-bold animate-in slide-in-from-bottom-2 font-black font-bold font-bold font-bold font-black">
                       <span className="text-[14px] font-black text-zinc-800 leading-tight flex items-center gap-1.5 truncate pr-2 font-bold font-black font-bold font-bold font-bold font-black font-bold font-black">
-                        <span className="text-[10px] text-zinc-400 font-bold shrink-0 font-bold font-black font-bold font-black font-bold font-black font-bold font-black font-bold">[{getCategoryInfo(item.name).char}]</span>
+                        <span className="text-[10px] text-zinc-400 font-bold font-black shrink-0 font-bold font-black font-bold font-black font-bold font-black font-bold font-black font-bold">[{getCategoryInfo(item.name).char}]</span>
                         <span className="truncate font-bold font-black font-bold font-black font-bold font-bold font-black font-bold font-black font-bold">{item.name}</span> <span className="text-[11px] opacity-40 ml-1 font-mono shrink-0 font-normal font-bold font-black font-mono font-bold font-black font-bold font-black font-mono font-black font-mono font-black font-mono font-black font-mono">x{item.count}</span>
                       </span>
                       <span className="text-[14px] font-black font-mono text-zinc-400 shrink-0 font-bold font-black font-mono font-bold font-black font-mono font-bold font-black font-mono font-bold font-black font-mono font-bold font-black font-mono font-bold font-black font-mono">{formatPrice(item.itemTotal)}</span>
@@ -542,4 +524,38 @@ const App = () => {
       {showResetAuthModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200 font-sans font-bold font-bold font-bold font-black">
            <div className="bg-white w-full max-w-sm rounded-[36px] p-10 shadow-2xl text-center border-t-[10px] border-red-600 font-bold font-bold font-bold font-black font-bold">
-              
+              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6 font-bold font-black font-bold font-bold font-black"><Lock size={32} className="text-red-600" /></div>
+              <h3 className="text-xl font-black mb-2 font-black font-bold font-black font-bold font-black font-bold">전체 장부 초기화</h3>
+              <p className="text-zinc-500 text-[11px] mb-8 font-bold leading-relaxed font-bold font-black font-bold font-black font-bold font-black">저장된 모든 판매 내역이 삭제됩니다.<br/>관리자 비밀번호를 입력하세요.</p>
+              <input type="password" placeholder="****" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} className="w-full bg-zinc-50 border-4 border-zinc-100 rounded-[20px] p-4 text-center font-black text-3xl mb-5 focus:border-red-600 transition-all outline-none font-bold font-black font-bold font-black font-bold" />
+              <div className="flex flex-col gap-2 font-bold font-black font-black font-bold font-black">
+                <button onClick={handleGlobalReset} className="w-full py-4.5 bg-red-600 text-white rounded-2xl font-black shadow-lg shadow-red-200 active:scale-95 font-bold font-black font-black font-bold font-black font-black">기록 삭제</button>
+                <button onClick={() => {setShowResetAuthModal(false); setResetPassword('');}} className="w-full py-4.5 bg-zinc-100 text-zinc-400 rounded-2xl font-bold active:scale-95 font-bold font-black font-black font-bold font-black font-black">취소</button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {showNewOrderPopup && viewMode === 'packing' && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md animate-in fade-in duration-300 font-black font-bold font-bold font-black">
+          <div className="bg-white rounded-[42px] p-10 shadow-2xl text-center max-w-sm w-full animate-in zoom-in duration-300 border-[8px] border-black font-black font-bold font-bold font-black">
+             <BellRing size={56} className="text-emerald-600 animate-bounce mx-auto mb-6 font-bold font-bold font-black" />
+             <h3 className="text-2xl font-black mb-2 font-black font-bold font-black font-bold font-black font-bold">새 주문 도착!</h3>
+             <p className="text-zinc-500 text-xs mb-10 font-bold leading-relaxed font-bold font-black font-black font-bold font-black font-black">결제가 완료되었습니다.<br/>즉시 포장을 시작해 주세요.</p>
+             <button onClick={() => setShowNewOrderPopup(false)} className="w-full py-4.5 bg-black text-white rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all font-bold font-black font-bold font-black font-bold">확인</button>
+          </div>
+        </div>
+      )}
+
+      {showToast && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[120] bg-zinc-900 text-white px-8 py-3.5 rounded-full shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-10 whitespace-nowrap font-bold font-black font-bold font-black">
+          <Check size={18} className="text-emerald-500 shrink-0 font-bold font-bold font-black" /> 
+          <span className="text-[11px] font-black tracking-tight font-black font-bold font-black font-bold font-black font-bold font-black">{showToast}</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
+
